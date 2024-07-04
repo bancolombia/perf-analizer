@@ -4,11 +4,12 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.MetricsAnalyzerUseCase d
   """
   use GenServer
   require Logger
-  alias DistributedPerformanceAnalyzer.Domain.Model.ExecutionModel
+  alias DistributedPerformanceAnalyzer.Domain.Model.Config.Strategy
 
   alias DistributedPerformanceAnalyzer.Domain.UseCase.{
     MetricsCollectorUseCase,
-    Reports.ReportUseCase
+    Reports.ReportUseCase,
+    Config.ConfigUseCase
   }
 
   alias DistributedPerformanceAnalyzer.Utils.{Statistics, DataTypeUtils}
@@ -17,18 +18,20 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.MetricsAnalyzerUseCase d
     GenServer.cast(__MODULE__, :compute)
   end
 
-  def start_link(conf) do
+  def start_link(_) do
     Logger.debug("Starting metrics analyzer server...")
-    GenServer.start_link(__MODULE__, conf, name: __MODULE__)
+    #    TODO: do parallel
+    scenario = ConfigUseCase.get(:scenarios) |> Enum.at(0)
+    GenServer.start_link(__MODULE__, scenario, name: __MODULE__)
   end
 
   @impl true
-  def init(conf) do
-    {:ok, conf}
+  def init(scenario) do
+    {:ok, scenario.strategy}
   end
 
   @impl true
-  def handle_cast(:compute, %ExecutionModel{duration: duration}) do
+  def handle_cast(:compute, %Strategy{duration: duration}) do
     step_duration = Statistics.millis_to_seconds(duration)
     metrics = MetricsCollectorUseCase.get_metrics()
 

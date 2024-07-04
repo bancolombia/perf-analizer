@@ -7,10 +7,11 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.MetricsCollectorUseCase 
   the result row of this step is also printed.
   """
 
-  alias DistributedPerformanceAnalyzer.Domain.Model.ExecutionModel
+  alias DistributedPerformanceAnalyzer.Domain.Model.Config.Strategy
 
   alias DistributedPerformanceAnalyzer.Domain.UseCase.{
-    PartialResultUseCase
+    PartialResultUseCase,
+    Config.ConfigUseCase
   }
 
   alias DistributedPerformanceAnalyzer.Utils.Statistics
@@ -18,12 +19,18 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.MetricsCollectorUseCase 
   use GenServer
   require Logger
 
+  def start_link(_) do
+    Logger.debug("Starting metrics collector server...")
+    #    TODO: do parallel
+    scenario = ConfigUseCase.get(:scenarios) |> Enum.at(0)
+    GenServer.start_link(__MODULE__, scenario.strategy, name: {:global, __MODULE__})
+  end
+
   @spec send_metrics(List.t(), String.t(), integer()) :: {:ok, atom()} | {:error, atom()}
   def send_metrics(results, step, concurrency) do
     partial =
       PartialResultUseCase.calculate(results,
-        keep_responses:
-          Application.get_env(:distributed_performance_analyzer, :jmeter_report, true)
+        keep_responses: ConfigUseCase.get(:jmeter_report, true)
       )
 
     GenServer.call({:global, __MODULE__}, {:results, partial, step, concurrency})
@@ -37,13 +44,8 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.MetricsCollectorUseCase 
     GenServer.cast({:global, __MODULE__}, :clean)
   end
 
-  def start_link(conf) do
-    Logger.debug("Starting metrics collector server...")
-    GenServer.start_link(__MODULE__, conf, name: {:global, __MODULE__})
-  end
-
   @impl true
-  def init(%ExecutionModel{duration: step_duration}) do
+  def init(%Strategy{duration: step_duration}) do
     {:ok, {Statistics.millis_to_seconds(step_duration), %{}}}
   end
 

@@ -1,12 +1,9 @@
 defmodule DistributedPerformanceAnalyzer.Application do
-  alias DistributedPerformanceAnalyzer.Config.{AppConfig, AppRegistry, ConfigHolder}
-  alias DistributedPerformanceAnalyzer.Utils.{CertificatesAdmin, CustomTelemetry}
+  alias DistributedPerformanceAnalyzer.Config.{AppConfig}
+  alias DistributedPerformanceAnalyzer.Utils.CertificatesAdmin
 
   alias DistributedPerformanceAnalyzer.Domain.UseCase.{
-    ConnectionPoolUseCase,
-    ExecutionUseCase,
-    MetricsCollectorUseCase,
-    MetricsAnalyzerUseCase,
+    Execution.ExecutionUseCase,
     Config.ConfigUseCase,
     Dataset.DatasetUseCase
   }
@@ -17,106 +14,58 @@ defmodule DistributedPerformanceAnalyzer.Application do
   @default_runtime_config "config/performance.exs"
 
   def start(_type, [env]) do
-    # config = AppConfig.load_config()
-
+    #    :observer.start()
+    load_config(env)
     CertificatesAdmin.setup()
 
-    # children = all_env_children() ++ env_children(Mix.env())
+    distributed = AppConfig.load!(:distributed)
+    children = all_env_children() ++ env_children(Mix.env(), distributed)
 
     # CustomTelemetry.custom_telemetry_events()
-    # opts = [strategy: :one_for_one, name: DistributedPerformanceAnalyzer.Supervisor]
-    # Supervisor.start_link(children, opts)
-
-    init(env)
-  end
-
-  def stop({:error, message}) do
-    Logger.error(message)
-    stop(:none)
-  end
-
-  def stop(env) when is_atom(env) do
-    IO.puts("Finishing...")
-    Application.stop(:distributed_performance_analyzer)
-
-    if env != :test do
-      System.stop(0)
-    end
+    opts = [strategy: :one_for_one, name: DistributedPerformanceAnalyzer.Supervisor]
+    pid = Supervisor.start_link(children, opts)
+    #    Process.sleep(100_000)
+    pid
   end
 
   def all_env_children() do
     [
-      {ConfigHolder, AppConfig.load_config()},
-      {TelemetryMetricsPrometheus, [metrics: CustomTelemetry.metrics()]}
+      #      {TelemetryMetricsPrometheus, [metrics: CustomTelemetry.metrics()]},
+      {ConfigUseCase, AppConfig.load()}
     ]
   end
 
-  def env_children(:test) do
-    []
+  def env_children(:test, _distributed), do: []
+
+  def env_children(_other_env, distributed) do
+    children = [DatasetUseCase]
+    master_children = [ExecutionUseCase]
+
+    if distributed == :none || distributed == :master do
+      children ++ master_children
+    else
+      children
+    end
   end
 
-  def env_children(_other_env) do
-    [
-      {Finch, name: HttpFinch, pools: %{:default => [size: 500]}}
-    ]
-  end
-
-  defp init(env) do
+  defp load_config(env) do
     if env != :test do
       with {:ok, _} <- File.stat(@default_runtime_config) do
         Config.Reader.read!(@default_runtime_config)
-        |> Application.put_all_env()
+        |> AppConfig.set()
       end
 
-      Logger.configure(level: Application.fetch_env!(:logger, :level))
+      Logger.configure(level: AppConfig.load!(:logger, :level))
     end
+  end
 
-    {:ok,
-     %{
-       distributed: distributed,
-       connection_conf: connection_conf,
-       execution_conf: execution_conf
-     }} =
-      ConfigUseCase.parse_config_file(Application.get_all_env(:distributed_performance_analyzer))
+  def stop({:error, message}) do
+    Logger.error(message)
+    stop()
+  end
 
-    children = [
-      {ConfigHolder, execution_conf},
-      {DatasetUseCase, execution_conf},
-      {ConnectionPoolUseCase, connection_conf},
-      {DynamicSupervisor,
-       name: DPA.ConnectionSupervisor,
-       strategy: :one_for_one,
-       max_restarts: 10_000,
-       max_seconds: 1},
-      AppRegistry
-    ]
-
-    master_children = [
-      {MetricsAnalyzerUseCase, execution_conf},
-      {MetricsCollectorUseCase, execution_conf},
-      ExecutionUseCase
-    ]
-
-    children =
-      if distributed == :none || distributed == :master do
-        children ++ master_children
-      else
-        children
-      end
-
-    pid = Supervisor.start_link(children, strategy: :one_for_one)
-
-    if execution_conf.steps > 0 && distributed == :none do
-      ExecutionUseCase.launch_execution()
-    end
-
-    Process.monitor(Process.whereis(MetricsAnalyzerUseCase))
-
-    receive do
-      {:DOWN, _ref, :process, _pid, :normal} ->
-        stop(env)
-    end
-
-    pid
+  def stop() do
+    IO.puts("Finishing...")
+    Application.stop(AppConfig.get_app_name())
   end
 end

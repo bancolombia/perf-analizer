@@ -3,57 +3,65 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.Dataset.DatasetUseCase d
   Use case for handle dataset
   """
 
-  alias DistributedPerformanceAnalyzer.Domain.Model.ExecutionModel
+  alias DistributedPerformanceAnalyzer.Config.AppConfig
+  alias DistributedPerformanceAnalyzer.Domain.Model.Config.Dataset
+  alias DistributedPerformanceAnalyzer.Domain.UseCase.Config.ConfigUseCase
 
   use GenServer
   require Logger
 
-  @file_system Application.compile_env(
-                 :distributed_performance_analyzer,
-                 :file_system
-               )
-  @dataset_parser Application.compile_env(
-                    :distributed_performance_analyzer,
-                    :dataset_parser
-                  )
+  @file_system Application.compile_env!(AppConfig.get_app_name(), :file_system)
+  @dataset_parser Application.compile_env!(AppConfig.get_app_name(), :dataset_parser)
 
   @valid_extensions [".csv"]
 
-  def start_link(execution_config) do
+  def start_link(_) do
     Logger.debug("Starting dataset server...")
-    GenServer.start_link(__MODULE__, execution_config, name: __MODULE__)
+    GenServer.start_link(__MODULE__, ConfigUseCase.get(:datasets), name: __MODULE__)
   end
 
   @impl true
-  def init(%ExecutionModel{dataset: dataset_path, separator: separator}) do
-    :ets.new(__MODULE__, [:named_table, read_concurrency: true])
+  def init(datasets) when is_list(datasets) do
+    datasets |> Enum.each(&persists_dataset(&1))
+    {:ok, nil}
+  end
 
-    if is_binary(dataset_path) do
-      with {:ok, dataset} <- parse_file(dataset_path, separator) do
-        dataset
-        |> Enum.with_index(1)
-        |> Enum.each(fn {value, index} -> :ets.insert(__MODULE__, {index, value}) end)
+  defp persists_dataset({table_name, %Dataset{path: path, separator: separator, ordered: _}})
+       when is_atom(table_name) do
+    #    TODO: use ordered config
+    :ets.new(table_name, [:named_table])
 
-        :ets.insert(__MODULE__, {:length, length(dataset)})
+    if is_binary(path) do
+      case parse_file(path, separator) do
+        {:ok, dataset} ->
+          dataset
+          |> Enum.with_index(1)
+          |> Enum.each(&insert_into_table(table_name, &1))
 
-        {:ok, %{index: 0}}
-      else
+          :ets.insert(table_name, {:length, length(dataset)})
+
+          {:ok, %{table_name: table_name, index: 0}}
+
         {:error, message} ->
           Logger.error(message)
           {:stop, :dataset_error}
       end
     else
-      :ets.insert(__MODULE__, {:length, -1})
+      :ets.insert(table_name, {:length, -1})
       {:ok, nil}
     end
+  end
+
+  defp insert_into_table(table_name, {value, index}) do
+    :ets.insert(table_name, {index, value})
   end
 
   defp parse_file(path, separator) when is_binary(path) do
     Logger.info("Reading dataset file: #{path}")
 
     with {:ok, _path} <- file_exists?(path),
-         {:ok, _path} <- has_valid_extension?(path),
-         {:ok, _path} <- is_utf8_encoded?(path) do
+         {:ok, _path} <- valid_extension?(path),
+         {:ok, _path} <- utf8_encoded?(path) do
       @dataset_parser.parse_csv(path, separator)
     else
       {:error, reason} -> Logger.error("Error reading dataset file: #{inspect(reason)}")
@@ -67,15 +75,15 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.Dataset.DatasetUseCase d
     end
   end
 
-  defp has_valid_extension?(path) do
-    case @file_system.has_valid_extension?(path, @valid_extensions) do
+  defp valid_extension?(path) do
+    case @file_system.valid_extension?(path, @valid_extensions) do
       true -> {:ok, path}
       _ -> {:error, "Dataset file #{path} does not have a valid extension"}
     end
   end
 
-  defp is_utf8_encoded?(path) do
-    case @file_system.has_utf8_encoding?(path) do
+  defp utf8_encoded?(path) do
+    case @file_system.utf8_encoding?(path) do
       true -> {:ok, path}
       _ -> {:error, "Dataset file #{path} is not UTF-8 encoded"}
     end
@@ -83,13 +91,20 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.Dataset.DatasetUseCase d
 
   #  TODO: Add sequential item request from dataset
 
-  def get_random_item() do
-    [length: length] = :ets.lookup(__MODULE__, :length)
+  def get_random_item(table_name) when is_binary(table_name),
+    do: get_random_item(String.to_atom(table_name))
 
-    if length > 0 do
-      random = Enum.random(1..length)
-      [{^random, value}] = :ets.lookup(__MODULE__, random)
-      value
+  def get_random_item(table_name) when is_atom(table_name) do
+    if table_name != :none do
+      case :ets.lookup(table_name, :length) do
+        [{_, length}] when length > 0 ->
+          random = Enum.random(1..length)
+          [{_, value}] = :ets.lookup(table_name, random)
+          value
+
+        _ ->
+          nil
+      end
     else
       nil
     end
@@ -105,7 +120,7 @@ defmodule DistributedPerformanceAnalyzer.Domain.UseCase.Dataset.DatasetUseCase d
     item = Map.put(item, "random", "#{Enum.random(1..10)}")
 
     Regex.replace(~r/{([a-z A-Z _-]+)?}/, value, fn _, match ->
-      item[match]
+      Map.get(item, match)
     end)
   end
 

@@ -5,8 +5,8 @@ defmodule DistributedPerformanceAnalyzer.MixProject do
     [
       app: :distributed_performance_analyzer,
       version: "0.1.0",
-      elixir: "~> 1.15",
-      start_permanent: Mix.env() == :prod,
+      elixir: "~> 1.17",
+      start_permanent: true,
       test_coverage: [
         tool: ExCoveralls,
         summary: [threshold: 90]
@@ -41,8 +41,18 @@ defmodule DistributedPerformanceAnalyzer.MixProject do
 
   # Run "mix help compile.app" to learn about applications.
   def application do
+    extra_applications =
+      case Mix.env() do
+        :dev ->
+          [:logger, :opentelemetry_exporter, :opentelemetry, :eex, :wx, :observer, :runtime_tools]
+
+        _ ->
+          [:logger, :opentelemetry_exporter, :opentelemetry]
+      end
+
     [
-      extra_applications: [:logger, :opentelemetry_exporter, :opentelemetry],
+      extra_applications: extra_applications,
+      included_applications: [:mnesia],
       mod: {DistributedPerformanceAnalyzer.Application, [Mix.env()]}
     ]
   end
@@ -52,30 +62,31 @@ defmodule DistributedPerformanceAnalyzer.MixProject do
     [
       {:sobelow, "~> 0.13", only: :dev},
       {:credo_sonarqube, "~> 0.1"},
-      {:finch, "~> 0.13"},
+      {:finch, "~> 0.1"},
       {:opentelemetry_plug,
        git: "https://github.com/juancgalvis/opentelemetry_plug.git", tag: "master"},
-      {:opentelemetry_api, "~> 1.2"},
-      {:opentelemetry_exporter, "~> 1.6"},
+      {:opentelemetry_api, "~> 1.0"},
+      {:opentelemetry_exporter, "~> 1.0"},
       {:telemetry, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:telemetry_metrics_prometheus, "~> 1.0"},
       {:castore, "~> 1.0"},
-      {:plug_cowboy, "~> 2.6"},
+      {:plug_cowboy, "~> 2.0"},
       {:jason, "~> 1.0"},
       {:plug_checkup, "~> 0.6"},
       {:poison, "~> 5.0"},
       {:cors_plug, "~> 3.0"},
-      {:excoveralls, "~> 0.17", only: :test},
+      {:excoveralls, "~> 0.18", only: :test},
       {:ex_unit_sonarqube, "~> 0.1", only: :test},
-      {:constructor, "~> 1.1"},
-      {:nimble_csv, "~> 1.2"},
+      {:constructor, "~> 1.0"},
+      {:nimble_csv, "~> 1.0"},
       {:file_size, "~> 3.0"},
-      {:mint, "~> 1.5"},
-      {:tesla, "~> 1.7"},
+      {:mint, "~> 1.0"},
+      {:tesla, "~> 1.0"},
       {:git_hooks, "~> 0.7", only: [:dev], runtime: false},
       {:benchee, "~> 1.0", only: [:dev, :test]},
-      {:benchee_html, "~> 1.0", only: [:dev, :test]}
+      {:benchee_html, "~> 1.0", only: [:dev, :test]},
+      {:poolboy, "~> 1.5"}
     ]
   end
 

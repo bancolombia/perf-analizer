@@ -5,6 +5,13 @@ defmodule DistributedPerformanceAnalyzer.Utils.DataTypeUtils do
   Provides functions for normalize data
   """
 
+  def parse_to_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {number, _} -> number
+      _ -> nil
+    end
+  end
+
   def round_number(number), do: trunc(number)
   def round_number(float, precision) when is_float(float), do: Float.round(float, precision)
   def round_number(number, _precision), do: number
@@ -23,6 +30,13 @@ defmodule DistributedPerformanceAnalyzer.Utils.DataTypeUtils do
   def base64_decode(string) do
     {:ok, value} = Base.decode64(string, padding: false)
     value
+  end
+
+  def extract_headers(headers, names)
+      when is_list(headers)
+      when is_list(names) do
+    downcase_names = names |> Enum.map(&String.downcase/1)
+    Enum.filter(headers, fn {k, _} -> Enum.member?(downcase_names, String.downcase(k)) end)
   end
 
   def extract_header!(headers, name) when is_list(headers) do
@@ -66,6 +80,8 @@ defmodule DistributedPerformanceAnalyzer.Utils.DataTypeUtils do
 
   def format(value, _type), do: value
 
+  def timestamp(), do: System.system_time() |> system_time_to_milliseconds()
+
   def system_time_to_milliseconds(system_time) do
     (system_time / 1.0e6) |> round()
   end
@@ -87,7 +103,7 @@ defmodule DistributedPerformanceAnalyzer.Utils.DataTypeUtils do
     String.replace(body, ",", ".")
   end
 
-  def parse(url),
+  def parse_url(url),
     do:
       :uri_string.parse(url)
       |> compose_url_parts()
